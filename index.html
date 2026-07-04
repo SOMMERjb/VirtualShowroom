@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8" />
-<title>Arztpraxis Showroom – Spannrahmen-Lösungen</title>
+<title>Behandlungszimmer Showroom – Spannrahmen-Lösungen</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0b0d; }
@@ -35,20 +35,21 @@
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const loadingEl = document.getElementById("loading");
 
 // --- Basic setup ---------------------------------------------------------
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xeef2f3);
-scene.fog = new THREE.Fog(0xeef2f3, 14, 26);
+scene.background = new THREE.Color(0xdfe6e8);
 
-const ROOM_W = 10;
-const ROOM_D = 8;
-const ROOM_H = 3.2;
+const ROOM_W = 6.4;
+const ROOM_D = 6.0;
+const ROOM_H = 2.8;
+const WALL_MARGIN = 0.35;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(5.4, 2.1, 5.6);
+camera.position.set(2.4, 1.75, 2.35);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -60,13 +61,25 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.5, -1);
+controls.target.set(0.1, 1.2, -0.6);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.minDistance = 2.5;
-controls.maxDistance = 16;
+controls.minDistance = 1.2;
+controls.maxDistance = 5.2;
+controls.minPolarAngle = 0.35;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
+
+// Hard clamp so the camera can never pass through a wall/floor/ceiling,
+// regardless of how OrbitControls' internal spherical math plays out.
+function clampCameraToRoom() {
+  camera.position.x = THREE.MathUtils.clamp(camera.position.x, -ROOM_W / 2 + WALL_MARGIN, ROOM_W / 2 - WALL_MARGIN);
+  camera.position.z = THREE.MathUtils.clamp(camera.position.z, -ROOM_D / 2 + WALL_MARGIN, ROOM_D / 2 - WALL_MARGIN);
+  camera.position.y = THREE.MathUtils.clamp(camera.position.y, 0.35, ROOM_H - 0.15);
+}
 
 // --- Procedural calming-graphic textures (no external image assets) ------
 function makeCanvasTexture(w, h, draw) {
@@ -153,32 +166,6 @@ function texWaterPanel(w = 900, h = 1400) {
   });
 }
 
-function texForestPortrait(w = 900, h = 1400) {
-  return makeCanvasTexture(w, h, (ctx) => {
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, "#d9ecd6");
-    grad.addColorStop(0.55, "#a9d3ab");
-    grad.addColorStop(1, "#4c8c63");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-
-    softBlob(ctx, w * 0.75, h * 0.12, w * 0.3, "rgba(255,250,220,0.8)");
-
-    for (let i = 0; i < 5; i++) {
-      const cx = (i % 2 === 0 ? 0.25 : 0.7) * w + (i * 13);
-      const cy = h * (0.35 + i * 0.12);
-      ctx.fillStyle = `rgba(${60 + i * 8},${120 - i * 4},${70 - i * 3},0.85)`;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - 110);
-      ctx.lineTo(cx - 70, cy + 70);
-      ctx.lineTo(cx + 70, cy + 70);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillRect(cx - 10, cy + 60, 20, 80);
-    }
-  });
-}
-
 function texSkyCeiling(w = 1600, h = 1200) {
   return makeCanvasTexture(w, h, (ctx) => {
     const grad = ctx.createLinearGradient(0, 0, 0, h);
@@ -186,64 +173,137 @@ function texSkyCeiling(w = 1600, h = 1200) {
     grad.addColorStop(1, "#e9f5fb");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
+    const rand = mulberry32(7);
     for (let i = 0; i < 9; i++) {
-      const cx = Math.random() * w;
-      const cy = Math.random() * h * 0.8;
-      const r = 90 + Math.random() * 140;
+      const cx = rand() * w;
+      const cy = rand() * h * 0.8;
+      const r = 90 + rand() * 140;
       softBlob(ctx, cx, cy, r, "rgba(255,255,255,0.85)");
       softBlob(ctx, cx + r * 0.4, cy + r * 0.15, r * 0.7, "rgba(255,255,255,0.7)");
     }
   });
 }
 
-function texWoodFloor(w = 512, h = 512) {
+// Deterministic PRNG so the sky texture is stable across reloads.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function texClinicalFloor(w = 512, h = 512) {
   return makeCanvasTexture(w, h, (ctx) => {
-    ctx.fillStyle = "#dccdb4";
+    ctx.fillStyle = "#d7dcdb";
     ctx.fillRect(0, 0, w, h);
-    const plankH = h / 8;
-    for (let i = 0; i < 8; i++) {
-      ctx.fillStyle = i % 2 === 0 ? "#d8c7ab" : "#e0d1b8";
-      ctx.fillRect(0, i * plankH, w, plankH);
-      ctx.strokeStyle = "rgba(120,95,65,0.15)";
-      ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(120,130,128,0.25)";
+    ctx.lineWidth = 2;
+    const tile = w / 4;
+    for (let i = 0; i <= 4; i++) {
       ctx.beginPath();
-      ctx.moveTo(0, i * plankH);
-      ctx.lineTo(w, i * plankH);
+      ctx.moveTo(i * tile, 0);
+      ctx.lineTo(i * tile, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i * tile);
+      ctx.lineTo(w, i * tile);
       ctx.stroke();
     }
+    ctx.globalAlpha = 0.06;
+    const rand = mulberry32(3);
+    for (let i = 0; i < 400; i++) {
+      ctx.fillStyle = rand() > 0.5 ? "#000" : "#fff";
+      ctx.fillRect(rand() * w, rand() * h, 1.5, 1.5);
+    }
+    ctx.globalAlpha = 1;
   });
 }
 
 // --- Room shell ------------------------------------------------------------
-const floorTex = texWoodFloor();
+const floorTex = texClinicalFloor();
 floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-floorTex.repeat.set(ROOM_W / 2.2, ROOM_D / 2.2);
+floorTex.repeat.set(ROOM_W / 1.6, ROOM_D / 1.6);
 const floor = new THREE.Mesh(
   new THREE.PlaneGeometry(ROOM_W, ROOM_D),
-  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.75, metalness: 0.02 })
+  new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.55, metalness: 0.05 })
 );
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-const wallMat = new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.95 });
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xeef2f2, roughness: 0.92 });
+const baseboardMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
+
+function addBaseboard(x, z, length, rotationY) {
+  const board = new THREE.Mesh(new THREE.BoxGeometry(length, 0.09, 0.02), baseboardMat);
+  board.position.set(x, 0.045, z);
+  board.rotation.y = rotationY;
+  board.receiveShadow = true;
+  scene.add(board);
+}
 
 const backWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_H), wallMat);
 backWall.position.set(0, ROOM_H / 2, -ROOM_D / 2);
 backWall.receiveShadow = true;
 scene.add(backWall);
+addBaseboard(0, -ROOM_D / 2 + 0.01, ROOM_W, 0);
 
 const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_D, ROOM_H), wallMat);
 leftWall.position.set(-ROOM_W / 2, ROOM_H / 2, 0);
 leftWall.rotation.y = Math.PI / 2;
 leftWall.receiveShadow = true;
 scene.add(leftWall);
+addBaseboard(-ROOM_W / 2 + 0.01, 0, ROOM_D, Math.PI / 2);
 
 const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_D, ROOM_H), wallMat);
 rightWall.position.set(ROOM_W / 2, ROOM_H / 2, 0);
 rightWall.rotation.y = -Math.PI / 2;
 rightWall.receiveShadow = true;
 scene.add(rightWall);
+addBaseboard(ROOM_W / 2 - 0.01, 0, ROOM_D, Math.PI / 2);
+
+// Front wall with a door opening, so the room reads as a real, enclosed treatment room
+{
+  const doorWidth = 1.0;
+  const doorHeight = 2.1;
+  const sideWidth = (ROOM_W - doorWidth) / 2;
+
+  const leftSeg = new THREE.Mesh(new THREE.PlaneGeometry(sideWidth, ROOM_H), wallMat);
+  leftSeg.position.set(-ROOM_W / 2 + sideWidth / 2, ROOM_H / 2, ROOM_D / 2);
+  leftSeg.rotation.y = Math.PI;
+  leftSeg.receiveShadow = true;
+  scene.add(leftSeg);
+
+  const rightSeg = new THREE.Mesh(new THREE.PlaneGeometry(sideWidth, ROOM_H), wallMat);
+  rightSeg.position.set(ROOM_W / 2 - sideWidth / 2, ROOM_H / 2, ROOM_D / 2);
+  rightSeg.rotation.y = Math.PI;
+  rightSeg.receiveShadow = true;
+  scene.add(rightSeg);
+
+  const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth, ROOM_H - doorHeight), wallMat);
+  lintel.position.set(ROOM_W / 2 - sideWidth - doorWidth / 2, doorHeight + (ROOM_H - doorHeight) / 2, ROOM_D / 2);
+  lintel.rotation.y = Math.PI;
+  lintel.receiveShadow = true;
+  scene.add(lintel);
+
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0xcfd6d6, roughness: 0.4, metalness: 0.1 });
+  const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xdfefef, roughness: 0.15, metalness: 0, transmission: 0.55, thickness: 0.05 });
+  const doorGroup = new THREE.Group();
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorWidth, doorHeight, 0.06), doorMat);
+  doorFrame.castShadow = true;
+  doorGroup.add(doorFrame);
+  const doorGlass = new THREE.Mesh(new THREE.PlaneGeometry(doorWidth * 0.55, doorHeight * 0.4), glassMat);
+  doorGlass.position.set(0, doorHeight * 0.18, 0.031);
+  doorGroup.add(doorGlass);
+  doorGroup.position.set(ROOM_W / 2 - sideWidth - doorWidth / 2, doorHeight / 2, ROOM_D / 2 - 0.03);
+  scene.add(doorGroup);
+
+  addBaseboard(-ROOM_W / 2 + sideWidth / 2, ROOM_D / 2 - 0.01, sideWidth, 0);
+  addBaseboard(ROOM_W / 2 - sideWidth / 2, ROOM_D / 2 - 0.01, sideWidth, 0);
+}
 
 const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, side: THREE.DoubleSide });
 const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), ceilingMat);
@@ -252,19 +312,27 @@ ceiling.position.y = ROOM_H;
 scene.add(ceiling);
 
 // --- Ambient + fill lighting ------------------------------------------------
-scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd7dcdb, 0.3));
 
-function addDownlight(x, z) {
-  const spot = new THREE.SpotLight(0xfff3e0, 60, 8, Math.PI / 6, 0.6, 1.4);
+function addDownlight(x, z, intensity = 45) {
+  const spot = new THREE.SpotLight(0xfff6e8, intensity, 6.5, Math.PI / 6, 0.6, 1.4);
   spot.position.set(x, ROOM_H - 0.05, z);
   spot.target.position.set(x, 0, z);
   spot.castShadow = true;
   spot.shadow.mapSize.set(1024, 1024);
   scene.add(spot, spot.target);
+
+  const housing = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.04, 0.3),
+    new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.5 })
+  );
+  housing.position.set(x, ROOM_H - 0.02, z);
+  scene.add(housing);
 }
-addDownlight(-2.5, 1.5);
-addDownlight(2.5, 1.5);
-addDownlight(0, -2.5);
+addDownlight(-1.6, -1.4);
+addDownlight(1.6, 0.6);
+addDownlight(-1.4, 1.8, 30);
 
 // --- Spannrahmen (tension-frame) panel builder -----------------------------
 const glowPulses = [];
@@ -303,71 +371,45 @@ function createFramePanel({ width, height, texture, x, y, z, rotationY = 0, fram
   return group;
 }
 
-// Large modular "Spannrahmenwand" on the back wall — the flagship product
+// Large modular "Spannrahmenwand" behind the treatment table — flagship product
 createFramePanel({
-  width: 5.6,
-  height: 2.1,
+  width: 4.2,
+  height: 1.7,
   texture: texMeadowWide(),
   x: 0,
-  y: 1.65,
+  y: 1.55,
   z: -ROOM_D / 2 + 0.05,
   glowColor: 0xdff5e0,
-  glowIntensity: 9,
+  glowIntensity: 7,
 });
 
-// Mullions overlaid on the big wall to show the modular tile grid
 {
   const mullionMat = new THREE.MeshStandardMaterial({ color: 0xd8d8dc, roughness: 0.4, metalness: 0.5 });
-  const tilesX = 4;
-  const tileW = 5.6 / tilesX;
+  const tilesX = 3;
+  const tileW = 4.2 / tilesX;
   for (let i = 1; i < tilesX; i++) {
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.02, 2.1, 0.07), mullionMat);
-    bar.position.set(-2.8 + i * tileW, 1.65, -ROOM_D / 2 + 0.06);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.02, 1.7, 0.07), mullionMat);
+    bar.position.set(-2.1 + i * tileW, 1.55, -ROOM_D / 2 + 0.06);
     scene.add(bar);
   }
 }
 
-// Individual wall-mounted Spannrahmen panels on the right wall
+// Small accent panel on the right wall, above the supply cabinet
 createFramePanel({
-  width: 1.0,
-  height: 1.55,
+  width: 0.9,
+  height: 1.3,
   texture: texWaterPanel(),
   x: ROOM_W / 2 - 0.05,
-  y: 1.55,
-  z: -1.6,
+  y: 1.85,
+  z: -1.4,
   rotationY: -Math.PI / 2,
   glowColor: 0xdaf0f5,
-  glowIntensity: 5,
+  glowIntensity: 4,
 });
 
-createFramePanel({
-  width: 1.0,
-  height: 1.55,
-  texture: texForestPortrait(),
-  x: ROOM_W / 2 - 0.05,
-  y: 1.55,
-  z: 0.9,
-  rotationY: -Math.PI / 2,
-  glowColor: 0xe4f5df,
-  glowIntensity: 5,
-});
-
-// Small accent panel above reception desk on the left wall
-createFramePanel({
-  width: 1.3,
-  height: 0.95,
-  texture: texWaterPanel(),
-  x: -ROOM_W / 2 + 0.05,
-  y: 2.05,
-  z: 1.2,
-  rotationY: Math.PI / 2,
-  glowColor: 0xdaf0f5,
-  glowIntensity: 5,
-});
-
-// Ceiling Spannrahmen panel — patients/guests look up at a calming "skylight"
+// Ceiling Spannrahmen panel, centered right above the treatment table
 {
-  const width = 3.0, height = 2.0;
+  const width = 1.8, height = 1.3;
   const border = 0.08, depth = 0.06;
   const group = new THREE.Group();
 
@@ -382,7 +424,7 @@ createFramePanel({
     map: tex,
     emissiveMap: tex,
     emissive: 0xffffff,
-    emissiveIntensity: 1.3,
+    emissiveIntensity: 1.25,
     roughness: 0.7,
     side: THREE.DoubleSide,
   });
@@ -391,102 +433,288 @@ createFramePanel({
   panel.position.y = -depth / 2 - 0.005;
   group.add(panel);
 
-  const glow = new THREE.PointLight(0xdcefff, 14, 5, 2);
-  glow.position.y = -0.6;
+  const glow = new THREE.PointLight(0xdcefff, 10, 4, 2);
+  glow.position.y = -0.5;
   group.add(glow);
-  glowPulses.push({ light: glow, base: 14, mat: panelMat, baseEmissive: 1.3 });
+  glowPulses.push({ light: glow, base: 10, mat: panelMat, baseEmissive: 1.25 });
 
-  group.position.set(0, ROOM_H - 0.02, 0.5);
+  group.position.set(0.3, ROOM_H - 0.02, -0.4);
   scene.add(group);
 }
 
-// --- Waiting-room furniture --------------------------------------------------
-const woodMat = new THREE.MeshStandardMaterial({ color: 0xb98a5a, roughness: 0.55, metalness: 0.05 });
-const upholsteryMat = new THREE.MeshStandardMaterial({ color: 0x7fa6a0, roughness: 0.8 });
-const metalLegMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.4, metalness: 0.7 });
+// --- Treatment-room furniture ------------------------------------------------
+const cabinetMat = new THREE.MeshStandardMaterial({ color: 0xf2f4f4, roughness: 0.45, metalness: 0.05 });
+const cabinetAccentMat = new THREE.MeshStandardMaterial({ color: 0xaebfc2, roughness: 0.4, metalness: 0.1 });
+const steelMat = new THREE.MeshStandardMaterial({ color: 0xc7cdd0, roughness: 0.25, metalness: 0.85 });
+const padMat = new THREE.MeshStandardMaterial({ color: 0x8fb3ae, roughness: 0.7 });
+const handleMat = new THREE.MeshStandardMaterial({ color: 0x999f9f, roughness: 0.3, metalness: 0.8 });
 
-function createChair(x, z, rotationY) {
+// Treatment table (Behandlungsliege), centerpiece facing the accent wall
+function createTreatmentTable(x, z) {
   const group = new THREE.Group();
 
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.5), upholsteryMat);
-  seat.position.y = 0.45;
-  seat.castShadow = true;
-  seat.receiveShadow = true;
-  group.add(seat);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.5, 1.7), steelMat);
+  base.position.y = 0.25;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  group.add(base);
 
-  const back = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.08), upholsteryMat);
-  back.position.set(0, 0.72, -0.21);
-  back.castShadow = true;
-  group.add(back);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 1.9), padMat);
+  top.position.y = 0.56;
+  top.castShadow = true;
+  top.receiveShadow = true;
+  group.add(top);
 
-  const legPositions = [
-    [0.2, 0.65], [-0.2, 0.65], [0.2, -0.2], [-0.2, -0.2],
-  ];
-  legPositions.forEach(([lx, lz]) => {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 8), metalLegMat);
-    leg.position.set(lx, 0.225, lz);
-    leg.castShadow = true;
-    group.add(leg);
+  const headrest = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.1, 0.4), padMat);
+  headrest.position.set(0, 0.66, -0.85);
+  headrest.rotation.x = -0.15;
+  headrest.castShadow = true;
+  group.add(headrest);
+
+  const paperRoll = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.66, 20), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }));
+  paperRoll.rotation.z = Math.PI / 2;
+  paperRoll.position.set(0, 0.72, 0.98);
+  paperRoll.castShadow = true;
+  group.add(paperRoll);
+
+  const paperSheet = new THREE.Mesh(new THREE.PlaneGeometry(0.68, 0.5), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, side: THREE.DoubleSide }));
+  paperSheet.position.set(0, 0.44, 1.15);
+  paperSheet.rotation.x = -0.35;
+  group.add(paperSheet);
+
+  group.position.set(x, 0, z);
+  scene.add(group);
+}
+createTreatmentTable(0.2, -0.5);
+
+// Wall-mounted articulated exam lamp, angled down toward the table
+function createExamLamp(x, y, z) {
+  const group = new THREE.Group();
+
+  const mount = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 16), steelMat);
+  mount.rotation.x = Math.PI / 2;
+  group.add(mount);
+
+  const arm1 = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.55, 12), steelMat);
+  arm1.position.set(0.05, -0.05, 0.25);
+  arm1.rotation.x = Math.PI / 2.3;
+  arm1.castShadow = true;
+  group.add(arm1);
+
+  const joint = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), steelMat);
+  joint.position.set(0.05, -0.28, 0.48);
+  group.add(joint);
+
+  const arm2 = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.45, 12), steelMat);
+  arm2.position.set(0.05, -0.5, 0.62);
+  arm2.rotation.x = Math.PI / 1.6;
+  arm2.castShadow = true;
+  group.add(arm2);
+
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.1, 0.08, 24), new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.3, metalness: 0.4 }));
+  head.position.set(0.05, -0.72, 0.7);
+  head.rotation.x = Math.PI / 2.2;
+  head.castShadow = true;
+  group.add(head);
+
+  const bulb = new THREE.Mesh(
+    new THREE.CircleGeometry(0.09, 24),
+    new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff2c0, emissiveIntensity: 1.6 })
+  );
+  bulb.position.set(0.05, -0.76, 0.72);
+  bulb.rotation.x = -1.1;
+  group.add(bulb);
+
+  const spot = new THREE.SpotLight(0xfff2d0, 22, 3, Math.PI / 7, 0.5, 1.2);
+  spot.position.set(x + 0.05, y - 0.76, z + 0.72);
+  spot.target.position.set(x + 0.1, 0.6, z + 1.2);
+  scene.add(spot, spot.target);
+
+  group.position.set(x, y, z);
+  scene.add(group);
+}
+createExamLamp(-0.9, 2.3, -1.6);
+
+// Sink counter with cabinet doors, faucet and a small mirror shelf, left wall
+function createSinkCounter(x, z) {
+  const group = new THREE.Group();
+
+  const carcass = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 1.3), cabinetMat);
+  carcass.position.y = 0.425;
+  carcass.castShadow = true;
+  carcass.receiveShadow = true;
+  group.add(carcass);
+
+  [-0.32, 0.32].forEach((dz) => {
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.7, 0.55), cabinetAccentMat);
+    door.position.set(0.28, 0.42, dz);
+    door.castShadow = true;
+    group.add(door);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.015, 8, 8), handleMat);
+    knob.position.set(0.29, 0.42, dz + (dz > 0 ? -0.22 : 0.22));
+    group.add(knob);
+  });
+
+  const counterTop = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.04, 1.36), steelMat);
+  counterTop.position.y = 0.87;
+  counterTop.castShadow = true;
+  group.add(counterTop);
+
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.15, 0.12, 24), new THREE.MeshStandardMaterial({ color: 0xe9edee, roughness: 0.2, metalness: 0.2 }));
+  basin.position.set(0.05, 0.85, -0.15);
+  group.add(basin);
+
+  const faucetBase = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 10), steelMat);
+  faucetBase.position.set(0.05, 0.98, -0.35);
+  group.add(faucetBase);
+  const faucetArc = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.012, 8, 16, Math.PI), steelMat);
+  faucetArc.position.set(0.05, 1.08, -0.25);
+  faucetArc.rotation.set(0, Math.PI / 2, 0);
+  group.add(faucetArc);
+
+  const soapDispenser = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.14, 10), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }));
+  soapDispenser.position.set(0.15, 0.94, -0.55);
+  group.add(soapDispenser);
+
+  group.position.set(x, 0, z);
+  group.rotation.y = Math.PI / 2;
+  scene.add(group);
+}
+createSinkCounter(-ROOM_W / 2 + 0.32, 1.4);
+
+// Tall medical supply cabinet with drawers, right wall
+function createSupplyCabinet(x, z) {
+  const group = new THREE.Group();
+
+  const carcass = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.5, 1.0), cabinetMat);
+  carcass.position.y = 0.75;
+  carcass.castShadow = true;
+  carcass.receiveShadow = true;
+  group.add(carcass);
+
+  for (let i = 0; i < 4; i++) {
+    const drawer = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.28, 0.86), cabinetAccentMat);
+    drawer.position.set(-0.235, 0.2 + i * 0.33, 0);
+    drawer.castShadow = true;
+    group.add(drawer);
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.02, 0.16), handleMat);
+    handle.position.set(-0.245, 0.2 + i * 0.33, 0);
+    group.add(handle);
+  }
+
+  const topSurface = new THREE.Mesh(new THREE.BoxGeometry(0.47, 0.03, 1.02), steelMat);
+  topSurface.position.y = 1.51;
+  topSurface.castShadow = true;
+  group.add(topSurface);
+
+  const jarGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.14, 16);
+  [-0.3, 0, 0.3].forEach((dz, i) => {
+    const jar = new THREE.Mesh(jarGeo, new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.7, roughness: 0.1, thickness: 0.05 }));
+    jar.position.set(-0.1 + i * 0.05, 1.6, dz);
+    jar.castShadow = true;
+    group.add(jar);
   });
 
   group.position.set(x, 0, z);
-  group.rotation.y = rotationY;
+  group.rotation.y = -Math.PI / 2;
   scene.add(group);
 }
+createSupplyCabinet(ROOM_W / 2 - 0.23, -1.4);
 
-for (let i = -1; i <= 1; i++) {
-  createChair(i * 0.75, 1.6, Math.PI);
+// Rolling instrument cart, foot of the treatment table
+function createInstrumentCart(x, z) {
+  const group = new THREE.Group();
+
+  const shelfGeo = new THREE.BoxGeometry(0.5, 0.03, 0.35);
+  const frameMat = steelMat;
+  const heights = [0.02, 0.45, 0.85];
+  heights.forEach((h) => {
+    const shelf = new THREE.Mesh(shelfGeo, frameMat);
+    shelf.position.y = h;
+    shelf.castShadow = true;
+    shelf.receiveShadow = true;
+    group.add(shelf);
+  });
+
+  const postPositions = [
+    [0.22, 0.15], [-0.22, 0.15], [0.22, -0.15], [-0.22, -0.15],
+  ];
+  postPositions.forEach(([px, pz]) => {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.83, 8), frameMat);
+    post.position.set(px, 0.43, pz);
+    group.add(post);
+  });
+
+  const wheelGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.03, 12);
+  postPositions.forEach(([px, pz]) => {
+    const wheel = new THREE.Mesh(wheelGeo, new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.6 }));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(px, 0.03, pz);
+    group.add(wheel);
+  });
+
+  const trayGeo = new THREE.BoxGeometry(0.18, 0.03, 0.12);
+  const trayMat = new THREE.MeshStandardMaterial({ color: 0xd7dde0, roughness: 0.3, metalness: 0.5 });
+  const tray = new THREE.Mesh(trayGeo, trayMat);
+  tray.position.set(0.05, 0.87, 0);
+  tray.castShadow = true;
+  group.add(tray);
+
+  const bottleGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.1, 12);
+  const bottle = new THREE.Mesh(bottleGeo, new THREE.MeshPhysicalMaterial({ color: 0xbcd8e0, transmission: 0.6, roughness: 0.15 }));
+  bottle.position.set(-0.15, 0.9, 0.05);
+  group.add(bottle);
+
+  group.position.set(x, 0, z);
+  scene.add(group);
 }
+createInstrumentCart(1.0, 0.6);
 
-// Small side table with a potted plant
+// Rolling stool for the practitioner, head of the table
+function createStool(x, z) {
+  const group = new THREE.Group();
+
+  const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.07, 24), padMat);
+  seat.position.y = 0.52;
+  seat.castShadow = true;
+  group.add(seat);
+
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.42, 12), steelMat);
+  post.position.y = 0.3;
+  group.add(post);
+
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 16), steelMat);
+  hub.position.y = 0.08;
+  group.add(hub);
+
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2;
+    const legArm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.03), steelMat);
+    legArm.position.set(Math.cos(angle) * 0.11, 0.06, Math.sin(angle) * 0.11);
+    legArm.rotation.y = angle;
+    group.add(legArm);
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.02, 10), new THREE.MeshStandardMaterial({ color: 0x2f2f2f, roughness: 0.6 }));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(Math.cos(angle) * 0.21, 0.025, Math.sin(angle) * 0.21);
+    group.add(wheel);
+  }
+
+  group.position.set(x, 0, z);
+  scene.add(group);
+}
+createStool(-0.9, -1.5);
+
+// Small potted plant for warmth, corner near the sink
 {
-  const table = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.24, 0.42, 24), woodMat);
-  table.position.set(1.9, 0.21, 1.6);
-  table.castShadow = true;
-  table.receiveShadow = true;
-  scene.add(table);
-
-  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.13, 0.22, 16), new THREE.MeshStandardMaterial({ color: 0xa0522d, roughness: 0.8 }));
-  pot.position.set(-2.6, 0.11, 2.6);
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.18, 16), new THREE.MeshStandardMaterial({ color: 0x9a5a3a, roughness: 0.8 }));
+  pot.position.set(-ROOM_W / 2 + 0.3, 0.09, 2.4);
   pot.castShadow = true;
   scene.add(pot);
 
-  const foliage = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.7, 10), new THREE.MeshStandardMaterial({ color: 0x4a7a4a, roughness: 0.9 }));
-  foliage.position.set(-2.6, 0.55, 2.6);
+  const foliage = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.55, 10), new THREE.MeshStandardMaterial({ color: 0x4a7a4a, roughness: 0.9 }));
+  foliage.position.set(-ROOM_W / 2 + 0.3, 0.45, 2.4);
   foliage.castShadow = true;
   scene.add(foliage);
-}
-
-// Reception desk against the left wall
-{
-  const deskGroup = new THREE.Group();
-
-  const counter = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.06, 0.8), woodMat);
-  counter.position.y = 1.05;
-  counter.castShadow = true;
-  counter.receiveShadow = true;
-  deskGroup.add(counter);
-
-  const front = new THREE.Mesh(
-    new THREE.BoxGeometry(1.9, 1.0, 0.06),
-    new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.5, metalness: 0.1 })
-  );
-  front.position.set(0, 0.55, 0.37);
-  front.castShadow = true;
-  deskGroup.add(front);
-
-  const raisedTop = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.05, 0.3), woodMat);
-  raisedTop.position.set(0, 1.35, -0.25);
-  raisedTop.castShadow = true;
-  deskGroup.add(raisedTop);
-
-  const support = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.3, 0.3), metalLegMat);
-  support.position.set(0, 1.2, -0.25);
-  deskGroup.add(support);
-
-  deskGroup.position.set(-ROOM_W / 2 + 1.1, 0, 1.2);
-  deskGroup.rotation.y = Math.PI / 2;
-  scene.add(deskGroup);
 }
 
 // --- Resize handling -------------------------------------------------------
@@ -507,6 +735,7 @@ function animate() {
     g.mat.emissiveIntensity = g.baseEmissive * pulse;
   });
   controls.update();
+  clampCameraToRoom();
   renderer.render(scene, camera);
 }
 
